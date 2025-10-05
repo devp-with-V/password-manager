@@ -8,9 +8,13 @@ import { Input } from "@/components/ui/input"
 import { VaultItemCard } from "@/components/vault/vault-item-card"
 import { VaultItemForm } from "@/components/vault/vault-item-form"
 import { PasswordGenerator } from "@/components/password-generator"
+import { TOTPGenerator } from "@/components/extras/totp-generator"
+import { TagsManager } from "@/components/extras/tags-manager"
+import { ThemeToggle } from "@/components/extras/theme-toggle"
+import { ExportImport } from "@/components/extras/export-import"
 import { useEncryptionKey } from "@/hooks/use-encryption-key"
 import { encrypt, decrypt } from "@/lib/crypto"
-import { Plus, Search, LogOut, Shield, Loader2 } from "lucide-react"
+import { Plus, Search, LogOut, Shield, Loader2, Settings } from "lucide-react"
 import type { VaultItem, DecryptedVaultItem } from "@/types/vault"
 import { useToast } from "@/hooks/use-toast"
 
@@ -26,6 +30,8 @@ export default function VaultPage() {
   const [editingItem, setEditingItem] = useState<DecryptedVaultItem | undefined>()
   const [showGenerator, setShowGenerator] = useState(false)
   const [prefilledPassword, setPrefilledPassword] = useState("")
+  const [showExtras, setShowExtras] = useState(false)
+  const [tags, setTags] = useState<string[]>([])
   const { toast } = useToast()
 
   useEffect(() => {
@@ -37,15 +43,18 @@ export default function VaultPage() {
   useEffect(() => {
     const loadVaultItems = async () => {
       if (!encryptionKey || !session?.user?.id) {
+        console.log("[v0] Cannot load vault - encryptionKey:", !!encryptionKey, "session:", !!session?.user?.id)
         setIsLoading(false)
         return
       }
 
       try {
+        console.log("[v0] Fetching vault items from API...")
         const response = await fetch("/api/vault")
         if (!response.ok) throw new Error("Failed to load vault items")
 
         const encryptedItems: VaultItem[] = await response.json()
+        console.log("[v0] Received encrypted items:", encryptedItems.length)
 
         const decrypted = await Promise.all(
           encryptedItems.map(async (item) => {
@@ -68,6 +77,7 @@ export default function VaultPage() {
         )
 
         const validItems = decrypted.filter((item): item is DecryptedVaultItem => item !== null)
+        console.log("[v0] Successfully decrypted items:", validItems.length)
         setVaultItems(validItems)
         setFilteredItems(validItems)
       } catch (error) {
@@ -114,6 +124,7 @@ export default function VaultPage() {
     }
 
     try {
+      console.log("[v0] Encrypting vault item...")
       const encryptedTitle = await encrypt(itemData.title, encryptionKey)
       const encryptedUsername = await encrypt(itemData.username, encryptionKey)
       const encryptedPassword = await encrypt(itemData.password, encryptionKey)
@@ -136,15 +147,21 @@ export default function VaultPage() {
       const url = editingItem?._id ? `/api/vault/${editingItem._id}` : "/api/vault"
       const method = editingItem?._id ? "PUT" : "POST"
 
+      console.log("[v0] Sending encrypted item to API:", method, url)
       const response = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(encryptedItem),
       })
 
-      if (!response.ok) throw new Error("Failed to save item")
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error("[v0] API error:", errorData)
+        throw new Error("Failed to save item")
+      }
 
       const savedItem: VaultItem = await response.json()
+      console.log("[v0] Item saved successfully:", savedItem._id)
 
       const decryptedItem: DecryptedVaultItem = {
         _id: savedItem._id,
@@ -214,6 +231,60 @@ export default function VaultPage() {
     }
   }
 
+  const handleImportItems = async (items: DecryptedVaultItem[]) => {
+    if (!encryptionKey) return
+
+    try {
+      for (const item of items) {
+        const encryptedTitle = await encrypt(item.title, encryptionKey)
+        const encryptedUsername = await encrypt(item.username, encryptionKey)
+        const encryptedPassword = await encrypt(item.password, encryptionKey)
+        const encryptedUrl = await encrypt(item.url, encryptionKey)
+        const encryptedNotes = await encrypt(item.notes, encryptionKey)
+
+        const encryptedItem = {
+          encryptedTitle: encryptedTitle.encrypted,
+          ivTitle: encryptedTitle.iv,
+          encryptedUsername: encryptedUsername.encrypted,
+          ivUsername: encryptedUsername.iv,
+          encryptedPassword: encryptedPassword.encrypted,
+          ivPassword: encryptedPassword.iv,
+          encryptedUrl: encryptedUrl.encrypted,
+          ivUrl: encryptedUrl.iv,
+          encryptedNotes: encryptedNotes.encrypted,
+          ivNotes: encryptedNotes.iv,
+        }
+
+        await fetch("/api/vault", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(encryptedItem),
+        })
+      }
+
+      // Reload vault items
+      const response = await fetch("/api/vault")
+      const encryptedItems: VaultItem[] = await response.json()
+      const decrypted = await Promise.all(
+        encryptedItems.map(async (item) => ({
+          _id: item._id,
+          title: await decrypt(item.encryptedTitle, item.ivTitle, encryptionKey),
+          username: await decrypt(item.encryptedUsername, item.ivUsername, encryptionKey),
+          password: await decrypt(item.encryptedPassword, item.ivPassword, encryptionKey),
+          url: await decrypt(item.encryptedUrl, item.ivUrl, encryptionKey),
+          notes: await decrypt(item.encryptedNotes, item.ivNotes, encryptionKey),
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        })),
+      )
+
+      setVaultItems(decrypted)
+      setFilteredItems(decrypted)
+    } catch (error) {
+      console.error("[v0] Import error:", error)
+    }
+  }
+
   const handleLogout = async () => {
     localStorage.removeItem("_salt")
     sessionStorage.removeItem("_temp_pwd")
@@ -255,16 +326,44 @@ export default function VaultPage() {
                 <p className="text-sm text-muted-foreground">{session?.user?.email}</p>
               </div>
             </div>
-            <Button variant="outline" onClick={handleLogout}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Sign Out
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={showExtras ? "default" : "outline"}
+                onClick={() => {
+                  setShowExtras(!showExtras)
+                  setShowForm(false)
+                  setShowGenerator(false)
+                }}
+              >
+                <Settings className="h-4 w-4 mr-2" />
+                Extras
+              </Button>
+              <Button variant="outline" onClick={handleLogout}>
+                <LogOut className="h-4 w-4 mr-2" />
+                Sign Out
+              </Button>
+            </div>
           </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        {showGenerator && !showForm ? (
+        {showExtras ? (
+          <div className="max-w-4xl mx-auto space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">Extra Features</h2>
+              <Button variant="outline" onClick={() => setShowExtras(false)}>
+                Back to Vault
+              </Button>
+            </div>
+            <div className="grid gap-6 md:grid-cols-2">
+              <TOTPGenerator />
+              <ThemeToggle />
+              <TagsManager availableTags={tags} onTagsChange={setTags} />
+              <ExportImport vaultItems={vaultItems} encryptionKey={encryptionKey} onImport={handleImportItems} />
+            </div>
+          </div>
+        ) : showGenerator && !showForm ? (
           <div className="max-w-2xl mx-auto space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Generate Password</h2>

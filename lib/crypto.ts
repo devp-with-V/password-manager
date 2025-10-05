@@ -35,14 +35,20 @@ export async function deriveKey(password: string, salt: Uint8Array): Promise<Cry
  * Encrypt data using AES-GCM
  */
 export async function encrypt(data: string, key: CryptoKey): Promise<{ encrypted: string; iv: string }> {
-  const encoder = new TextEncoder()
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
+  try {
+    const encoder = new TextEncoder()
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
 
-  const encryptedData = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(data))
+    const encryptedData = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(data))
 
-  return {
-    encrypted: arrayBufferToBase64(encryptedData),
-    iv: arrayBufferToBase64(iv),
+    console.log("[v0] Encrypted data successfully")
+    return {
+      encrypted: arrayBufferToBase64(encryptedData),
+      iv: arrayBufferToBase64(iv),
+    }
+  } catch (error) {
+    console.error("[v0] Encryption failed:", error)
+    throw error
   }
 }
 
@@ -50,14 +56,19 @@ export async function encrypt(data: string, key: CryptoKey): Promise<{ encrypted
  * Decrypt data using AES-GCM
  */
 export async function decrypt(encryptedData: string, iv: string, key: CryptoKey): Promise<string> {
-  const decoder = new TextDecoder()
-  const decryptedData = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: base64ToArrayBuffer(iv) },
-    key,
-    base64ToArrayBuffer(encryptedData),
-  )
+  try {
+    const decoder = new TextDecoder()
+    const decryptedData = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64ToArrayBuffer(iv) },
+      key,
+      base64ToArrayBuffer(encryptedData),
+    )
 
-  return decoder.decode(decryptedData)
+    return decoder.decode(decryptedData)
+  } catch (error) {
+    console.error("[v0] Decryption failed:", error)
+    throw error
+  }
 }
 
 /**

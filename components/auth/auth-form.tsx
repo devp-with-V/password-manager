@@ -39,12 +39,31 @@ export function AuthForm() {
           throw new Error(data.error || "Failed to sign up")
         }
 
-        toast({
-          title: "Account created",
-          description: "Please sign in with your credentials",
+        const result = await signIn("credentials", {
+          email,
+          password,
+          redirect: false,
         })
 
-        setIsSignUp(false)
+        if (result?.error) {
+          toast({
+            title: "Account created",
+            description: "Please sign in with your credentials",
+          })
+          setIsSignUp(false)
+        } else {
+          // Store password for encryption
+          sessionStorage.setItem("_temp_pwd", password)
+          console.log("[v0] Password stored after signup")
+
+          toast({
+            title: "Account created",
+            description: "Welcome to SecureVault!",
+          })
+
+          router.push("/vault")
+          router.refresh()
+        }
       } else {
         // Sign in
         const result = await signIn("credentials", {
@@ -59,6 +78,7 @@ export function AuthForm() {
 
         // Store password in memory for encryption key derivation
         sessionStorage.setItem("_temp_pwd", password)
+        console.log("[v0] Password stored after signin")
 
         router.push("/vault")
         router.refresh()
